@@ -2,3 +2,4 @@ python-telegram-bot
 pytube
 TikTokApi
 instaloader
+yt_dlp
