@@ -1,105 +1,56 @@
-import yt_dlp
-import subprocess
 import os
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Updater, CommandHandler, MessageHandler, filters, CallbackContext
+import yt_dlp
 
+# Файл жолдары
 TOKEN = "8283970030:AAE_RSjA0F_6wQFFk0sG2iT366PQfci1l_w"
+COOKIE_FILE = "cookies.txt"  # Render-де немесе локалда ботпен бір папкада болу керек
 
-# ======== ВИДЕО ЖҮКТЕУ ФУНКЦИЯСЫ ========
-def download_video(url):
-    try:
-        output_file = "video.mp4"
-        ydl_opts = {
-            "format": "best[height<=720]",
-            "outtmpl": output_file,
-            "quiet": True,
-        }
+# Видео жүктеу функциясы
+def download_video(video_url: str, output_file: str):
+    ydl_opts = {
+        "format": "best[height<=720]",
+        "outtmpl": output_file,
+        "quiet": True,
+        "cookiefile": COOKIE_FILE,
+    }
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            duration = info.get("duration", 0)
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(video_url, download=True)
+        duration = info.get("duration", 0)
+    return duration
 
-        # Егер видео 10 минуттан ұзақ болса, қысқарту
-        if duration > 600:
-            print("⚙️ Видео ұзақ, 10 минутқа дейін қысқартылып жатыр...")
-            command = [
-                "ffmpeg", "-y", "-i", output_file, "-t", "600",
-                "-c:v", "libx264", "-c:a", "aac", "compressed.mp4"
-            ]
-        else:
-            print("⚙️ Видео қысқартусыз сақталуда...")
-            command = [
-                "ffmpeg", "-y", "-i", output_file,
-                "-c:v", "libx264", "-c:a", "aac",
-                "-b:v", "1500k", "-b:a", "128k", "compressed.mp4"
-            ]
+# /start командасы
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text("Сәлем! Видео сілтемесін жіберіңіз.")
 
-        # ffmpeg арқылы өңдеу
-        result = subprocess.run(command, capture_output=True, text=True, timeout=1200)
-
-        if result.returncode != 0:
-            print("FFMPEG ERROR:", result.stderr)
-            raise Exception("⚠️ ffmpeg қатесі — файл өңделмеді.")
-
-        if not os.path.exists("compressed.mp4"):
-            raise Exception("⚠️ Қысқартылған файл табылмады.")
-
-        return "compressed.mp4"
-
-    except subprocess.TimeoutExpired:
-        raise Exception("⚠️ Видео тым ұзақ немесе интернет баяу.")
-    except Exception as e:
-        raise Exception(f"Қате: {e}")
-
-# ======== /start ========
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Сәлем! 👋\n"
-        "Мен видео жүктейтін ботпын.\n\n"
-        "Тек YouTube, TikTok, немесе Instagram сілтемесін жіберіңіз — "
-        "мен оны 720p форматында жіберем 🎬"
-    )
-
-# ======== СІЛТЕМЕ ӨҢДЕУ ========
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Сілтеме келгенде
+def handle_message(update: Update, context: CallbackContext):
     url = update.message.text
+    update.message.reply_text("⏬ Видео жүктелуде, күте тұрыңыз...")
 
-    if any(x in url for x in ["youtube.com", "youtu.be", "tiktok.com", "instagram.com", "reel"]):
-        try:
-            await update.message.reply_text("⏬ Видео жүктелуде, күте тұрыңыз...")
-            filepath = download_video(url)
+    # Жүктеу
+    output_file = "video.mp4"  # уақытша файл аты
+    try:
+        duration = download_video(url, output_file)
+        # Видео жіберу
+        with open(output_file, "rb") as f:
+            update.message.reply_video(f)
+        os.remove(output_file)  # уақытша файлды өшіру
+    except Exception as e:
+        update.message.reply_text(f"Қате: {e}")
 
-            # 20MB-тан асса, қосымша қысқарту
-            if os.path.getsize(filepath) > 20 * 1024 * 1024:
-                await update.message.reply_text("⚙️ Видео үлкен, 720p-ға дейін қысқартылуда...")
-                subprocess.run([
-                    "ffmpeg", "-y", "-i", filepath,
-                    "-vf", "scale=-1:720", "-b:v", "1500k", "-preset", "veryfast", "compressed.mp4"
-                ], check=True)
-
-                if os.path.exists(filepath):
-                    os.remove(filepath)
-                filepath = "compressed.mp4"
-
-            with open(filepath, "rb") as video:
-                await update.message.reply_video(video)
-
-            os.remove(filepath)
-
-        except Exception as e:
-            await update.message.reply_text(str(e))
-
-    else:
-        await update.message.reply_text("❗ Тек YouTube, TikTok немесе Instagram сілтемесін жіберіңіз.")
-
-# ======== MAIN ========
+# Ботты іске қосу
 def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("✅ Бот іске қосылды!")
-    app.run_polling()
+    updater = Updater(TOKEN)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == "__main__":
     main()
